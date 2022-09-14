@@ -358,6 +358,13 @@ func authAclCheck(clientid, username, topic string, acc int) (bool, error) {
 	var cached bool
 	var granted bool
 	var err error
+
+	if aclPassKey, ok := authOpts["acl_pass_key"]; ok {
+		if strings.Contains(topic, aclPassKey) {
+			return true, nil
+		}
+	}
+
 	if authPlugin.useCache {
 		log.Debugf("checking acl cache for %s", username)
 		cached, granted = authPlugin.cache.CheckACLRecord(authPlugin.ctx, username, topic, clientid, acc)
