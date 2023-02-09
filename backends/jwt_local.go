@@ -1,9 +1,12 @@
 package backends
 
 import (
+	"context"
 	"database/sql"
 	"strings"
+	"time"
 
+	"github.com/iegomez/mosquitto-go-auth/backends/cache"
 	"github.com/iegomez/mosquitto-go-auth/hashing"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -16,6 +19,8 @@ type localJWTChecker struct {
 	userQuery string
 	hasher    hashing.HashComparer
 	options   tokenOptions
+	cache     cache.Store
+	ctx       context.Context
 }
 
 const (
@@ -30,6 +35,7 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 		db:      postgresDB,
 		options: options,
 	}
+	checker.ctx = context.Background()
 
 	missingOpts := ""
 	localOk := true
@@ -73,19 +79,45 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 	}
 
 	checker.postgres = postgres
+	checker.cache = cache.NewGoStore(
+		time.Duration(300)*time.Second,
+		time.Duration(300)*time.Second,
+		time.Duration(300)*time.Second,
+		time.Duration(300)*time.Second,
+		true,
+	)
 
 	return checker, nil
 }
 
 func (o *localJWTChecker) GetUser(token string) (bool, error) {
-	username, err := getUsernameForToken(o.options, token, o.options.skipUserExpiration)
+	var cached bool
+	var granted bool
 
+	cached, granted = o.cache.CheckAuthRecord(o.ctx, token, "")
+
+	if cached {
+		log.Debugf("found in cache: %s", token)
+		return granted, nil
+	}
+
+	// If the token is not cached, check the local DB.
+	username, err := getUsernameForToken(o.options, token, o.options.skipUserExpiration)
 	if err != nil {
 		log.Printf("jwt local get user error: %s", err)
 		return false, err
 	}
 
-	return o.getLocalUser(username)
+	granted, err = o.getLocalUser(username)
+
+	if granted {
+		if setAuthErr := o.cache.SetAuthRecord(o.ctx, token, "", "true"); setAuthErr != nil {
+			log.Errorf("set auth cache: %s", setAuthErr)
+			return false, nil
+		}
+	}
+
+	return granted, err
 }
 
 func (o *localJWTChecker) GetSuperuser(token string) (bool, error) {
