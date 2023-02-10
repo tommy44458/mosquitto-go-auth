@@ -76,8 +76,8 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 	checker.cache = cache.NewGoStore(
 		time.Duration(300)*time.Second,
 		time.Duration(300)*time.Second,
-		time.Duration(300)*time.Second,
-		time.Duration(300)*time.Second,
+		time.Duration(100)*time.Second,
+		time.Duration(100)*time.Second,
 		true,
 	)
 
