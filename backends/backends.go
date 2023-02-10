@@ -125,7 +125,7 @@ func (b *Backends) addBackends(authOpts map[string]string, logLevel log.Level, b
 		hasher := hashing.NewHasher(authOpts, allowedBackendsOptsPrefix[bename])
 		switch bename {
 		case postgresBackend:
-			beIface, err = NewPostgres(authOpts, logLevel, hasher)
+			beIface, err = NewPostgres(authOpts, logLevel, hasher, nil)
 			if err != nil {
 				log.Fatalf("backend register error: couldn't initialize %s backend with error %s.", bename, err)
 			} else {

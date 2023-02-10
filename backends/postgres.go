@@ -1,11 +1,13 @@
 package backends
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/iegomez/mosquitto-go-auth/backends/cache"
 	"github.com/iegomez/mosquitto-go-auth/backends/topics"
 	"github.com/iegomez/mosquitto-go-auth/hashing"
 	"github.com/jmoiron/sqlx"
@@ -14,7 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-//Postgres holds all fields of the postgres db connection.
+// Postgres holds all fields of the postgres db connection.
 type Postgres struct {
 	DB             *sqlx.DB
 	Host           string
@@ -31,11 +33,13 @@ type Postgres struct {
 	SSLRootCert    string
 	hasher         hashing.HashComparer
 	maxLifeTime    int64
+	cache          cache.Store
+	ctx            context.Context
 
 	connectTries int
 }
 
-func NewPostgres(authOpts map[string]string, logLevel log.Level, hasher hashing.HashComparer) (Postgres, error) {
+func NewPostgres(authOpts map[string]string, logLevel log.Level, hasher hashing.HashComparer, cache cache.Store) (Postgres, error) {
 
 	log.SetLevel(logLevel)
 
@@ -53,6 +57,9 @@ func NewPostgres(authOpts map[string]string, logLevel log.Level, hasher hashing.
 		hasher:         hasher,
 		connectTries:   -1,
 	}
+
+	postgres.ctx = context.Background()
+	postgres.cache = cache
 
 	if host, ok := authOpts["pg_host"]; ok {
 		postgres.Host = host
@@ -169,7 +176,7 @@ func NewPostgres(authOpts map[string]string, logLevel log.Level, hasher hashing.
 
 }
 
-//GetUser checks that the username exists and the given password hashes to the same password.
+// GetUser checks that the username exists and the given password hashes to the same password.
 func (o Postgres) GetUser(username, password, clientid string) (bool, error) {
 
 	var pwHash sql.NullString
@@ -198,7 +205,7 @@ func (o Postgres) GetUser(username, password, clientid string) (bool, error) {
 
 }
 
-//GetSuperuser checks that the username meets the superuser query.
+// GetSuperuser checks that the username meets the superuser query.
 func (o Postgres) GetSuperuser(username string) (bool, error) {
 
 	//If there's no superuser query, return false.
@@ -232,7 +239,7 @@ func (o Postgres) GetSuperuser(username string) (bool, error) {
 
 }
 
-//CheckAcl gets all acls for the username and tries to match against topic, acc, and username/clientid if needed.
+// CheckAcl gets all acls for the username and tries to match against topic, acc, and username/clientid if needed.
 func (o Postgres) CheckAcl(username, topic, clientid string, acc int32) (bool, error) {
 
 	//If there's no acl query, assume all privileges for all users.
@@ -240,20 +247,60 @@ func (o Postgres) CheckAcl(username, topic, clientid string, acc int32) (bool, e
 		return true, nil
 	}
 
-	var acls []string
+	accString := strconv.Itoa(int(acc))
 
-	err := o.DB.Select(&acls, o.AclQuery, username, acc)
+	if o.cache != nil {
+		var acls []string
+		var granted bool
+		acls, granted = o.cache.GetAclArrayRecord(o.ctx, username, accString)
+		if !granted {
+			// log.Errorf("cache not hit for user %s", username)
+			var dbAcls []string
+			err := o.DB.Select(&dbAcls, o.AclQuery, username, acc)
 
-	if err != nil {
-		log.Debugf("PG check acl error: %s", err)
-		return false, err
-	}
+			if err != nil {
+				log.Debugf("PG check acl error: %s", err)
+				return false, err
+			}
 
-	for _, acl := range acls {
-		aclTopic := strings.Replace(acl, "%c", clientid, -1)
-		aclTopic = strings.Replace(aclTopic, "%u", username, -1)
-		if topics.Match(aclTopic, topic) {
-			return true, nil
+			o.cache.SetAclArrayRecord(o.ctx, username, accString, dbAcls)
+
+			for _, acl := range dbAcls {
+				aclTopic := strings.Replace(acl, "%c", clientid, -1)
+				aclTopic = strings.Replace(aclTopic, "%u", username, -1)
+				if topics.Match(aclTopic, topic) {
+					return true, nil
+				}
+			}
+		} else {
+			// log.Errorf("ACL cache hit for user %s", username)
+			// aclString := strings.Join(acls, " ")
+			// log.Errorf("acl list %s", aclString)
+			for _, acl := range acls {
+				aclTopic := strings.Replace(acl, "%c", clientid, -1)
+				aclTopic = strings.Replace(aclTopic, "%u", username, -1)
+				if topics.Match(aclTopic, topic) {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	} else {
+		log.Errorf("cache is nil")
+		var dbAcls []string
+		err := o.DB.Select(&dbAcls, o.AclQuery, username, acc)
+
+		if err != nil {
+			log.Debugf("PG check acl error: %s", err)
+			return false, err
+		}
+
+		for _, acl := range dbAcls {
+			aclTopic := strings.Replace(acl, "%c", clientid, -1)
+			aclTopic = strings.Replace(aclTopic, "%u", username, -1)
+			if topics.Match(aclTopic, topic) {
+				return true, nil
+			}
 		}
 	}
 
@@ -261,12 +308,12 @@ func (o Postgres) CheckAcl(username, topic, clientid string, acc int32) (bool, e
 
 }
 
-//GetName returns the backend's name
+// GetName returns the backend's name
 func (o Postgres) GetName() string {
 	return "Postgres"
 }
 
-//Halt closes the mysql connection.
+// Halt closes the mysql connection.
 func (o Postgres) Halt() {
 	if o.DB != nil {
 		err := o.DB.Close()

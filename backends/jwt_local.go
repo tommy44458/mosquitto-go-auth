@@ -1,9 +1,12 @@
 package backends
 
 import (
+	"context"
 	"database/sql"
 	"strings"
+	"time"
 
+	"github.com/iegomez/mosquitto-go-auth/backends/cache"
 	"github.com/iegomez/mosquitto-go-auth/hashing"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -16,6 +19,8 @@ type localJWTChecker struct {
 	userQuery string
 	hasher    hashing.HashComparer
 	options   tokenOptions
+	cache     cache.Store
+	ctx       context.Context
 }
 
 const (
@@ -30,6 +35,7 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 		db:      postgresDB,
 		options: options,
 	}
+	checker.ctx = context.Background()
 
 	missingOpts := ""
 	localOk := true
@@ -67,7 +73,15 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 		return checker, nil
 	}
 
-	postgres, err := NewPostgres(dbAuthOpts, logLevel, hasher)
+	checker.cache = cache.NewGoStore(
+		time.Duration(300)*time.Second,
+		time.Duration(300)*time.Second,
+		time.Duration(300)*time.Second,
+		time.Duration(300)*time.Second,
+		true,
+	)
+
+	postgres, err := NewPostgres(dbAuthOpts, logLevel, hasher, checker.cache)
 	if err != nil {
 		return nil, errors.Errorf("JWT backend error: couldn't create postgres connector for local jwt: %s", err)
 	}
@@ -78,14 +92,33 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 }
 
 func (o *localJWTChecker) GetUser(token string) (bool, error) {
-	username, err := getUsernameForToken(o.options, token, o.options.skipUserExpiration)
+	var username string
+	var granted bool
 
+	username, granted = o.cache.GetTokenRecord(o.ctx, token)
+
+	if granted {
+		log.Debugf("JWT local GetUser found in cache: %s", username)
+		return true, nil
+	}
+
+	// If the token is not cached, check the local DB.
+	username, err := getUsernameForToken(o.options, token, o.options.skipUserExpiration)
 	if err != nil {
-		log.Printf("jwt local get user error: %s", err)
+		log.Printf("JWT local GetUser get user error: %s", err)
 		return false, err
 	}
 
-	return o.getLocalUser(username)
+	granted, err = o.getLocalUser(username)
+
+	if granted {
+		if setAuthErr := o.cache.SetTokenRecord(o.ctx, token, username); setAuthErr != nil {
+			log.Errorf("set token cache: %s", setAuthErr)
+			return false, nil
+		}
+	}
+
+	return granted, err
 }
 
 func (o *localJWTChecker) GetSuperuser(token string) (bool, error) {
@@ -104,18 +137,53 @@ func (o *localJWTChecker) GetSuperuser(token string) (bool, error) {
 }
 
 func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bool, error) {
-	username, err := getUsernameForToken(o.options, token, o.options.skipACLExpiration)
+	var username string
+	var granted bool
 
-	if err != nil {
-		log.Printf("jwt local check acl error: %s", err)
-		return false, err
+	username, granted = o.cache.GetTokenRecord(o.ctx, token)
+	log.Debugf("JWT local CheckAcl cache hit: %s", username)
+
+	if !granted {
+		var dbUsername string
+		var dbGranted bool
+		log.Debugf("not found in cache: %s", token)
+		dbUsername, err := getUsernameForToken(o.options, token, o.options.skipACLExpiration)
+		if err != nil {
+			log.Printf("jwt local check acl error: %s", err)
+			return false, err
+		}
+
+		dbGranted, err = o.getLocalUser(dbUsername)
+		log.Debugf("JWT local getLocalUser: %s", dbUsername)
+
+		if err != nil {
+			log.Printf("jwt local check acl error: %s", err)
+			return false, err
+		}
+
+		if dbGranted {
+			if setAuthErr := o.cache.SetTokenRecord(o.ctx, token, dbUsername); setAuthErr != nil {
+				log.Errorf("set token cache: %s", setAuthErr)
+				return false, nil
+			}
+		}
+
+		if o.db == mysqlDB {
+			return o.mysql.CheckAcl(dbUsername, topic, clientid, acc)
+		}
+		o.postgres.CheckAcl(dbUsername, topic, clientid, acc)
 	}
+
+	log.Debugf("JWT local found username in cache: %s", username)
 
 	if o.db == mysqlDB {
 		return o.mysql.CheckAcl(username, topic, clientid, acc)
 	}
 
-	return o.postgres.CheckAcl(username, topic, clientid, acc)
+	var result bool
+	result, err := o.postgres.CheckAcl(username, topic, clientid, acc)
+	log.Debugf("JWT local CheckAcl result: %t, %s, %s, %d", result, username, topic, acc)
+	return result, err
 }
 
 func (o *localJWTChecker) Halt() {
