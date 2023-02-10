@@ -35,8 +35,8 @@ type Store interface {
 	CheckACLRecord(ctx context.Context, username, topic, clientid string, acc int) (bool, bool)
 	SetTokenRecord(ctx context.Context, token string, username string) error
 	GetTokenRecord(ctx context.Context, token string) (string, bool)
-	SetAclArrayRecord(ctx context.Context, username string, aclArray []string) error
-	GetAclArrayRecord(ctx context.Context, username string) ([]string, bool)
+	SetAclArrayRecord(ctx context.Context, username string, acc string, aclArray []string) error
+	GetAclArrayRecord(ctx context.Context, username string, acc string) ([]string, bool)
 	Connect(ctx context.Context, reset bool) bool
 	Close()
 }
@@ -145,8 +145,8 @@ func (s *goStore) SetACLRecord(ctx context.Context, username, topic, clientid st
 // SetTokenRecord sets a token as key, username as value
 func (s *goStore) SetTokenRecord(ctx context.Context, token string, username string) error {
 	record := toAuthRecord(token, "", s.h)
-	log.Errorf("SetTokenRecord: %s\n", token)
-	log.Errorf("SetTokenRecord: %s\n", username)
+	// log.Errorf("SetTokenRecord: %s\n", token)
+	// log.Errorf("SetTokenRecord: %s\n", username)
 	s.client.Set(record, username, expirationWithJitter(s.aclExpiration, s.aclJitter))
 	return nil
 }
@@ -158,8 +158,8 @@ func (s *goStore) GetTokenRecord(ctx context.Context, token string) (string, boo
 	v, present := s.client.Get(record)
 	if present {
 		value, ok := v.(string)
-		log.Errorf("GetTokenRecord: %s\n", token)
-		log.Errorf("GetTokenRecord: %s\n", value)
+		// log.Errorf("GetTokenRecord: %s\n", token)
+		// log.Errorf("GetTokenRecord: %s\n", value)
 		if ok {
 			return value, true
 		}
@@ -173,24 +173,24 @@ func (s *goStore) GetTokenRecord(ctx context.Context, token string) (string, boo
 }
 
 // SetAclListRecord sets a token as key, Acl list as value
-func (s *goStore) SetAclArrayRecord(ctx context.Context, username string, aclArray []string) error {
-	record := toAuthRecord(username, "", s.h)
+func (s *goStore) SetAclArrayRecord(ctx context.Context, username string, acc string, aclArray []string) error {
+	record := toAuthRecord(username, acc, s.h)
 	aclString := strings.Join(aclArray, " ")
-	log.Errorf("SetAclArrayRecord: %s\n", username)
-	log.Errorf("SetAclArrayRecord: %s\n", aclString)
+	// log.Errorf("SetAclArrayRecord: %s\n", username)
+	// log.Errorf("SetAclArrayRecord: %s\n", aclString)
 	s.client.Set(record, aclString, expirationWithJitter(s.aclExpiration, s.aclJitter))
 	return nil
 }
 
 // CheckAuthRecord get the username from the token
-func (s *goStore) GetAclArrayRecord(ctx context.Context, username string) ([]string, bool) {
-	record := toAuthRecord(username, "", s.h)
+func (s *goStore) GetAclArrayRecord(ctx context.Context, username string, acc string) ([]string, bool) {
+	record := toAuthRecord(username, acc, s.h)
 
 	v, present := s.client.Get(record)
 	if present {
 		value, ok := v.(string)
-		log.Errorf("GetAclArrayRecord: %s\n", username)
-		log.Errorf("GetAclArrayRecord: %s\n", value)
+		// log.Errorf("GetAclArrayRecord: %s\n", username)
+		// log.Errorf("GetAclArrayRecord: %s\n", value)
 		if ok {
 			aclArray := strings.Split(value, " ")
 			return aclArray, true

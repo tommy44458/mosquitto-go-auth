@@ -247,12 +247,14 @@ func (o Postgres) CheckAcl(username, topic, clientid string, acc int32) (bool, e
 		return true, nil
 	}
 
+	accString := strconv.Itoa(int(acc))
+
 	if o.cache != nil {
 		var acls []string
 		var granted bool
-		acls, granted = o.cache.GetAclArrayRecord(o.ctx, username)
+		acls, granted = o.cache.GetAclArrayRecord(o.ctx, username, accString)
 		if !granted {
-			log.Errorf("cache not hit for user %s", username)
+			// log.Errorf("cache not hit for user %s", username)
 			var dbAcls []string
 			err := o.DB.Select(&dbAcls, o.AclQuery, username, acc)
 
@@ -261,7 +263,7 @@ func (o Postgres) CheckAcl(username, topic, clientid string, acc int32) (bool, e
 				return false, err
 			}
 
-			o.cache.SetAclArrayRecord(o.ctx, username, dbAcls)
+			o.cache.SetAclArrayRecord(o.ctx, username, accString, dbAcls)
 
 			for _, acl := range dbAcls {
 				aclTopic := strings.Replace(acl, "%c", clientid, -1)
@@ -271,9 +273,9 @@ func (o Postgres) CheckAcl(username, topic, clientid string, acc int32) (bool, e
 				}
 			}
 		} else {
-			log.Errorf("ACL cache hit for user %s", username)
-			aclString := strings.Join(acls, " ")
-			log.Errorf("acl list %s", aclString)
+			// log.Errorf("ACL cache hit for user %s", username)
+			// aclString := strings.Join(acls, " ")
+			// log.Errorf("acl list %s", aclString)
 			for _, acl := range acls {
 				aclTopic := strings.Replace(acl, "%c", clientid, -1)
 				aclTopic = strings.Replace(aclTopic, "%u", username, -1)
