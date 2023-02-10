@@ -171,7 +171,10 @@ func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bo
 		if o.db == mysqlDB {
 			return o.mysql.CheckAcl(dbUsername, topic, clientid, acc)
 		}
-		o.postgres.CheckAcl(dbUsername, topic, clientid, acc)
+
+		dbResult, err := o.postgres.CheckAcl(dbUsername, topic, clientid, acc)
+		log.Debugf("JWT local CheckAcl result: %t, %s, %s, %d", dbResult, username, topic, acc)
+		return dbResult, err
 	}
 
 	log.Debugf("JWT local found username in cache: %s", username)
@@ -180,7 +183,6 @@ func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bo
 		return o.mysql.CheckAcl(username, topic, clientid, acc)
 	}
 
-	var result bool
 	result, err := o.postgres.CheckAcl(username, topic, clientid, acc)
 	log.Debugf("JWT local CheckAcl result: %t, %s, %s, %d", result, username, topic, acc)
 	return result, err
