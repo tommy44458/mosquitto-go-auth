@@ -98,14 +98,14 @@ func (o *localJWTChecker) GetUser(token string) (bool, error) {
 	username, granted = o.cache.GetTokenRecord(o.ctx, token)
 
 	if granted {
-		log.Debugf("found in cache: %s", username)
+		log.Debugf("JWT local GetUser found in cache: %s", username)
 		return true, nil
 	}
 
 	// If the token is not cached, check the local DB.
 	username, err := getUsernameForToken(o.options, token, o.options.skipUserExpiration)
 	if err != nil {
-		log.Printf("jwt local get user error: %s", err)
+		log.Printf("JWT local GetUser get user error: %s", err)
 		return false, err
 	}
 
@@ -141,42 +141,49 @@ func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bo
 	var granted bool
 
 	username, granted = o.cache.GetTokenRecord(o.ctx, token)
+	log.Debugf("JWT local CheckAcl cache hit: %s", username)
 
 	if !granted {
+		var dbUsername string
+		var dbGranted bool
 		log.Debugf("not found in cache: %s", token)
-		username, err := getUsernameForToken(o.options, token, o.options.skipACLExpiration)
+		dbUsername, err := getUsernameForToken(o.options, token, o.options.skipACLExpiration)
 		if err != nil {
 			log.Printf("jwt local check acl error: %s", err)
 			return false, err
 		}
 
-		granted, err = o.getLocalUser(username)
+		dbGranted, err = o.getLocalUser(dbUsername)
+		log.Debugf("JWT local getLocalUser: %s", dbUsername)
 
 		if err != nil {
 			log.Printf("jwt local check acl error: %s", err)
 			return false, err
 		}
 
-		if granted {
-			if setAuthErr := o.cache.SetTokenRecord(o.ctx, token, username); setAuthErr != nil {
+		if dbGranted {
+			if setAuthErr := o.cache.SetTokenRecord(o.ctx, token, dbUsername); setAuthErr != nil {
 				log.Errorf("set token cache: %s", setAuthErr)
 				return false, nil
 			}
 		}
 
 		if o.db == mysqlDB {
-			return o.mysql.CheckAcl(username, topic, clientid, acc)
+			return o.mysql.CheckAcl(dbUsername, topic, clientid, acc)
 		}
-		return o.postgres.CheckAcl(username, topic, clientid, acc)
+		o.postgres.CheckAcl(dbUsername, topic, clientid, acc)
 	}
 
-	log.Debugf("found token in cache: %s", token)
+	log.Debugf("JWT local found username in cache: %s", username)
 
 	if o.db == mysqlDB {
 		return o.mysql.CheckAcl(username, topic, clientid, acc)
 	}
 
-	return o.postgres.CheckAcl(username, topic, clientid, acc)
+	var result bool
+	result, err := o.postgres.CheckAcl(username, topic, clientid, acc)
+	log.Debugf("JWT local CheckAcl result: %t, %s, %s, %d", result, username, topic, acc)
+	return result, err
 }
 
 func (o *localJWTChecker) Halt() {
