@@ -73,12 +73,6 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 		return checker, nil
 	}
 
-	postgres, err := NewPostgres(dbAuthOpts, logLevel, hasher)
-	if err != nil {
-		return nil, errors.Errorf("JWT backend error: couldn't create postgres connector for local jwt: %s", err)
-	}
-
-	checker.postgres = postgres
 	checker.cache = cache.NewGoStore(
 		time.Duration(300)*time.Second,
 		time.Duration(300)*time.Second,
@@ -87,18 +81,25 @@ func NewLocalJWTChecker(authOpts map[string]string, logLevel log.Level, hasher h
 		true,
 	)
 
+	postgres, err := NewPostgres(dbAuthOpts, logLevel, hasher, checker.cache)
+	if err != nil {
+		return nil, errors.Errorf("JWT backend error: couldn't create postgres connector for local jwt: %s", err)
+	}
+
+	checker.postgres = postgres
+
 	return checker, nil
 }
 
 func (o *localJWTChecker) GetUser(token string) (bool, error) {
-	var cached bool
+	var username string
 	var granted bool
 
-	cached, granted = o.cache.CheckAuthRecord(o.ctx, token, "")
+	username, granted = o.cache.GetTokenRecord(o.ctx, token)
 
-	if cached {
-		log.Debugf("found in cache: %s", token)
-		return granted, nil
+	if granted {
+		log.Debugf("found in cache: %s", username)
+		return true, nil
 	}
 
 	// If the token is not cached, check the local DB.
@@ -111,8 +112,8 @@ func (o *localJWTChecker) GetUser(token string) (bool, error) {
 	granted, err = o.getLocalUser(username)
 
 	if granted {
-		if setAuthErr := o.cache.SetAuthRecord(o.ctx, token, "", "true"); setAuthErr != nil {
-			log.Errorf("set auth cache: %s", setAuthErr)
+		if setAuthErr := o.cache.SetTokenRecord(o.ctx, token, username); setAuthErr != nil {
+			log.Errorf("set token cache: %s", setAuthErr)
 			return false, nil
 		}
 	}
@@ -136,12 +137,40 @@ func (o *localJWTChecker) GetSuperuser(token string) (bool, error) {
 }
 
 func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bool, error) {
-	username, err := getUsernameForToken(o.options, token, o.options.skipACLExpiration)
+	var username string
+	var granted bool
 
-	if err != nil {
-		log.Printf("jwt local check acl error: %s", err)
-		return false, err
+	username, granted = o.cache.GetTokenRecord(o.ctx, token)
+
+	if !granted {
+		log.Debugf("not found in cache: %s", token)
+		username, err := getUsernameForToken(o.options, token, o.options.skipACLExpiration)
+		if err != nil {
+			log.Printf("jwt local check acl error: %s", err)
+			return false, err
+		}
+
+		granted, err = o.getLocalUser(username)
+
+		if err != nil {
+			log.Printf("jwt local check acl error: %s", err)
+			return false, err
+		}
+
+		if granted {
+			if setAuthErr := o.cache.SetTokenRecord(o.ctx, token, username); setAuthErr != nil {
+				log.Errorf("set token cache: %s", setAuthErr)
+				return false, nil
+			}
+		}
+
+		if o.db == mysqlDB {
+			return o.mysql.CheckAcl(username, topic, clientid, acc)
+		}
+		return o.postgres.CheckAcl(username, topic, clientid, acc)
 	}
+
+	log.Debugf("found token in cache: %s", token)
 
 	if o.db == mysqlDB {
 		return o.mysql.CheckAcl(username, topic, clientid, acc)

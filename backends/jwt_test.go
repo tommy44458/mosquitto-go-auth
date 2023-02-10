@@ -272,7 +272,7 @@ func TestLocalPostgresJWT(t *testing.T) {
 		pgAuthOpts["pg_superquery"] = "mock"
 		pgAuthOpts["pg_aclquery"] = "mock"
 
-		db, err := NewPostgres(pgAuthOpts, log.DebugLevel, hashing.NewHasher(pgAuthOpts, ""))
+		db, err := NewPostgres(pgAuthOpts, log.DebugLevel, hashing.NewHasher(pgAuthOpts, ""), nil)
 		So(err, ShouldBeNil)
 
 		Convey("Given correct option NewJWT returns an instance of jwt backend", func() {
