@@ -141,7 +141,6 @@ func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bo
 	var granted bool
 
 	username, granted = o.cache.GetTokenRecord(o.ctx, token)
-	log.Debugf("JWT local CheckAcl cache hit: %s", username)
 
 	if !granted {
 		var dbUsername string
@@ -177,7 +176,7 @@ func (o *localJWTChecker) CheckAcl(token, topic, clientid string, acc int32) (bo
 		return dbResult, err
 	}
 
-	log.Debugf("JWT local found username in cache: %s", username)
+	log.Debugf("JWT local cache hit username: %s", username)
 
 	if o.db == mysqlDB {
 		return o.mysql.CheckAcl(username, topic, clientid, acc)
