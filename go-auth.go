@@ -366,10 +366,10 @@ func authAclCheck(clientid, username, topic string, acc int) (bool, error) {
 	}
 
 	if authPlugin.useCache {
-		log.Debugf("checking acl cache for %s", username)
+		// log.Debugf("checking acl cache for %s", username)
 		cached, granted = authPlugin.cache.CheckACLRecord(authPlugin.ctx, username, topic, clientid, acc)
 		if cached {
-			log.Debugf("found in cache: %s", username)
+			log.Debugf("found in cache: %s, %s, %d, %t", username, topic, acc, granted)
 			return granted, nil
 		}
 	}

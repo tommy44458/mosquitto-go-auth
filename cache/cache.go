@@ -106,13 +106,13 @@ func NewRedisClusterStore(password string, addresses []string, authExpiration, a
 
 func toAuthRecord(username, password string, h hash.Hash) string {
 	sum := h.Sum([]byte(fmt.Sprintf("auth-%s-%s", username, password)))
-	log.Debugf("to auth record: %v\n", sum)
+	// log.Debugf("to auth record: %v\n", sum)
 	return b64.StdEncoding.EncodeToString(sum)
 }
 
 func toACLRecord(username, topic, clientid string, acc int, h hash.Hash) string {
 	sum := h.Sum([]byte(fmt.Sprintf("acl-%s-%s-%s-%d", username, topic, clientid, acc)))
-	log.Debugf("to auth record: %v\n", sum)
+	// log.Debugf("to auth record: %v\n", sum)
 	return b64.StdEncoding.EncodeToString(sum)
 }
 
